@@ -1,1 +1,297 @@
-.
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CiteCheck</title>
+<style>
+:root{--bg:#0e0f12;--panel:#16181d;--line:#262a32;--ink:#e9e6df;--mute:#8b909a;--mark:#f3c746;--ok:#5fcf9a;--bad:#ef6f6c;--warn:#e0a458;--link:#9ec5ff}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.55 system-ui,-apple-system,"Segoe UI",sans-serif}
+a{color:var(--link);text-decoration:none}
+header{display:flex;flex-wrap:wrap;gap:12px;align-items:center;justify-content:space-between;padding:14px 16px;border-bottom:1px solid var(--line);position:sticky;top:0;background:var(--bg);z-index:5}
+.brand{font:700 22px Georgia,"Times New Roman",serif;letter-spacing:.2px}
+.brand span{background:linear-gradient(transparent 58%,var(--mark) 58%,var(--mark) 92%,transparent 92%);padding:0 2px}
+nav{display:flex;gap:14px;flex-wrap:wrap}
+nav a{color:var(--mute);padding:4px 0;border-bottom:2px solid transparent}
+nav a.on{color:var(--ink);border-color:var(--mark)}
+main{max-width:860px;margin:0 auto;padding:18px 16px 80px}
+h1{font:700 26px Georgia,serif;margin:6px 0 14px}
+h2{font:700 18px Georgia,serif;margin:22px 0 8px}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px 16px;margin:10px 0;display:block;color:inherit}
+a.card:hover{border-color:#3a4050}
+.row{display:flex;flex-wrap:wrap;gap:8px 14px;align-items:center;justify-content:space-between}
+.mute{color:var(--mute);font-size:14px}
+.mono{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:13px;word-break:break-all}
+.quote{border-left:3px solid var(--mark);background:rgba(243,199,70,.08);padding:8px 12px;margin:8px 0;font-family:Georgia,serif;font-size:17px}
+.chip{display:inline-block;font-size:12px;font-weight:600;padding:2px 9px;border-radius:99px;border:1px solid var(--line);letter-spacing:.4px}
+.OPEN{color:var(--link)}.CHALLENGED{color:var(--warn)}.ACCEPTED,.UPHELD{color:var(--ok)}.REFUTED{color:var(--bad)}.VOID{color:var(--mute)}
+button,.btn{background:var(--mark);color:#14110a;border:0;border-radius:9px;padding:10px 16px;font:600 15px system-ui;cursor:pointer}
+button.ghost{background:transparent;color:var(--ink);border:1px solid var(--line)}
+button:disabled{opacity:.45;cursor:not-allowed}
+input,textarea,select{width:100%;background:#0b0c0f;color:var(--ink);border:1px solid var(--line);border-radius:9px;padding:10px 12px;font:inherit}
+textarea{min-height:90px;resize:vertical}
+label{display:block;margin:14px 0 5px;font-size:14px;color:var(--mute)}
+.filters{display:grid;grid-template-columns:1fr 160px;gap:10px}
+.note{border:1px dashed var(--line);border-radius:10px;padding:10px 12px;margin:12px 0;font-size:14px;color:var(--mute)}
+.note.bad{border-color:var(--bad);color:var(--bad)}.note.ok{border-color:var(--ok);color:var(--ok)}
+dl{display:grid;grid-template-columns:130px 1fr;gap:6px 12px;margin:10px 0}
+dt{color:var(--mute);font-size:14px}dd{margin:0;word-break:break-word}
+.actions{display:flex;flex-wrap:wrap;gap:10px;margin:14px 0}
+@media(max-width:560px){.filters{grid-template-columns:1fr}dl{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<header>
+  <div class="brand"><span>Cite</span>Check</div>
+  <nav id="nav">
+    <a href="#/" data-r="home">Explore</a>
+    <a href="#/new" data-r="new">New claim</a>
+    <a href="#/withdraw" data-r="withdraw">My balance</a>
+  </nav>
+  <button id="connect" class="ghost">Connect wallet</button>
+</header>
+<main id="view"></main>
+
+<script type="module">
+import { createClient } from "https://esm.sh/genlayer-js@latest";
+import { studionet } from "https://esm.sh/genlayer-js@latest/chains";
+
+const CONTRACT_ADDRESS = "0x0000000000000000000000000000000000000000";
+const GEN = 10n ** 18n;
+
+let account = null;
+let client = createClient({ chain: studionet });
+let config = { challenge_window: 0, resolve_timeout: 604800, retry_delay: 3600, max_attempts: 3, min_bond: String(GEN) };
+const view = document.getElementById("view");
+const connectBtn = document.getElementById("connect");
+
+const esc = (v) => String(v ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const now = () => Math.floor(Date.now() / 1000);
+const short = (a) => (a ? a.slice(0, 6) + "…" + a.slice(-4) : "");
+const gen = (wei) => { const w = BigInt(wei); const whole = w / GEN; const frac = (w % GEN).toString().padStart(18, "0").replace(/0+$/, ""); return frac ? whole + "." + frac : String(whole); };
+const host = (u) => { try { return new URL(u).hostname; } catch { return u; } };
+const same = (a, b) => a && b && a.toLowerCase() === b.toLowerCase();
+const parse = (s) => (typeof s === "string" ? JSON.parse(s) : s);
+
+function ago(ts) {
+  const d = ts - now();
+  const abs = Math.abs(d);
+  const unit = abs >= 86400 ? Math.floor(abs / 86400) + "d" : abs >= 3600 ? Math.floor(abs / 3600) + "h" : abs >= 60 ? Math.floor(abs / 60) + "m" : abs + "s";
+  return d >= 0 ? "in " + unit : unit + " ago";
+}
+
+async function read(fn, args = []) {
+  return client.readContract({ address: CONTRACT_ADDRESS, functionName: fn, args });
+}
+
+async function write(fn, args, value = 0n, onStatus = () => {}) {
+  if (!account) throw new Error("Connect your wallet first.");
+  onStatus("Waiting for wallet confirmation…");
+  const hash = await client.writeContract({ address: CONTRACT_ADDRESS, functionName: fn, args, value });
+  onStatus("Transaction sent. Waiting for consensus…");
+  await client.waitForTransactionReceipt({ hash, status: "ACCEPTED", retries: 120, interval: 5000 });
+  return hash;
+}
+
+async function connect() {
+  if (!window.ethereum) { alert("No injected wallet found. Open this page in a wallet browser."); return; }
+  const accounts = await window.ethereum.request({ method: "eth_requestAccounts" });
+  account = accounts[0];
+  client = createClient({ chain: studionet, account });
+  connectBtn.textContent = short(account);
+  route();
+}
+connectBtn.addEventListener("click", () => connect().catch((e) => alert(e.message || e)));
+if (window.ethereum) {
+  window.ethereum.request({ method: "eth_accounts" }).then((a) => { if (a && a[0]) connect().catch(() => {}); }).catch(() => {});
+}
+
+function setNav(name) {
+  document.querySelectorAll("#nav a").forEach((a) => a.classList.toggle("on", a.dataset.r === name));
+}
+
+function notice(kind, text) {
+  return '<div class="note ' + kind + '">' + esc(text) + "</div>";
+}
+
+function statusChip(s) { return '<span class="chip ' + esc(s) + '">' + esc(s) + "</span>"; }
+
+function claimCard(c) {
+  const t = now();
+  const timing = c.status === "OPEN" ? (t < c.deadline ? "challenge window closes " + ago(c.deadline) : "window closed, ready to finalize") : c.status === "CHALLENGED" ? "awaiting resolution" : c.verdict ? "verdict: " + c.verdict : "";
+  return '<a class="card" href="#/claim/' + esc(c.id) + '"><div class="row"><strong>' + esc(c.claim_text) + "</strong>" + statusChip(c.status) + '</div><div class="mute">' + esc(host(c.source_url)) + " · bond " + esc(gen(c.bond)) + " GEN · " + esc(timing) + "</div></a>";
+}
+
+const PAGE_SIZE = 25;
+const PINNED = [
+  /^https:\/\/raw\.githubusercontent\.com\/[A-Za-z0-9][A-Za-z0-9-]{0,38}\/[A-Za-z0-9._-]{1,100}\/[0-9a-f]{40}\/[A-Za-z0-9._~%\/-]{1,200}$/,
+  /^https:\/\/arxiv\.org\/abs\/[0-9]{4}\.[0-9]{4,5}v[0-9]{1,3}$/,
+  /^https:\/\/[a-z]{2,3}(?:-[a-z]{2,8}){0,2}\.wikipedia\.org\/w\/index\.php\?(?:title=[A-Za-z0-9_%().,'!:-]{1,200}&)?oldid=[0-9]{1,12}$/,
+];
+const pinned = (u) => u.length <= 300 && !/\/\.\.?(\/|$)/.test(u) && PINNED.some((r) => r.test(u));
+const BLOCKED = /[<>{}`]|cc_|system prompt|ignore (?:all|previous|prior|the above)/i;
+const norm = (s) => s.replace(/[‘’]/g, "'").replace(/[“”]/g, '"').replace(/[–—]/g, "-").replace(/\s+/g, " ").trim();
+
+async function claimCount() { return Number(await read("get_claim_count")); }
+
+async function renderHome() {
+  setNav("home");
+  view.innerHTML = "<h1>Citation claims</h1><div class=\"filters\"><input id=\"q\" placeholder=\"Search loaded claims, sources, addresses\"><select id=\"st\"><option value=\"\">All statuses</option><option>OPEN</option><option>CHALLENGED</option><option>ACCEPTED</option><option>UPHELD</option><option>REFUTED</option><option>VOID</option></select></div><p class=\"mute\" id=\"meta\"></p><div id=\"list\"><p class=\"mute\">Loading…</p></div><div class=\"actions\"><button class=\"ghost\" id=\"more\" hidden>Load older claims</button></div>";
+  const items = [];
+  let total = 0;
+  const draw = () => {
+    const q = document.getElementById("q").value.toLowerCase();
+    const st = document.getElementById("st").value;
+    const shown = items.filter((c) => (!st || c.status === st) && (!q || (c.claim_text + c.source_url + c.citer + c.challenger + c.id).toLowerCase().includes(q)));
+    document.getElementById("list").innerHTML = shown.length ? shown.map(claimCard).join("") : '<p class="mute">No claims match.</p>';
+    document.getElementById("meta").textContent = "Showing " + items.length + " of " + total + " claims, newest first.";
+    document.getElementById("more").hidden = items.length >= total;
+  };
+  const load = async () => {
+    const page = parse(await read("list_claims", [items.length, PAGE_SIZE]));
+    total = Number(page.total);
+    items.push(...page.items);
+    draw();
+  };
+  document.getElementById("q").addEventListener("input", draw);
+  document.getElementById("st").addEventListener("change", draw);
+  document.getElementById("more").addEventListener("click", () => load().catch((e) => (document.getElementById("list").innerHTML += notice("bad", e.message || String(e)))));
+  try { await load(); } catch (e) { document.getElementById("list").innerHTML = notice("bad", "Could not load claims: " + (e.message || e)); }
+}
+
+function renderNew() {
+  setNav("new");
+  view.innerHTML = '<h1>Register a citation</h1><p class="mute">Bond GEN to stand behind a citation. If nobody challenges it during the challenge window you get the bond back. If a challenger shows the source does not say what you claim, they win both bonds.</p>' +
+    '<label>Statement being cited (1 to 400 characters)</label><textarea id="claim" maxlength="400" placeholder="What does the source say?"></textarea>' +
+    '<label>Pinned source URL</label><input id="url" placeholder="https://raw.githubusercontent.com/owner/repo/&lt;40-char commit sha&gt;/file.md">' +
+    '<p class="mute">Accepted: a raw.githubusercontent.com file at a full commit sha, an arxiv.org/abs link with a version (v1, v2…), or a Wikipedia permanent link with oldid. Pinned sources cannot be edited after you register, so neither side can move the evidence.</p>' +
+    '<label>Exact quoted passage from the source (20 to 600 characters)</label><textarea id="passage" maxlength="600"></textarea>' +
+    '<label>Bond in whole GEN (minimum 1)</label><input id="bond" type="number" min="1" step="1" value="1">' +
+    '<div class="actions"><button id="go">Register and bond</button></div><div id="out"></div>';
+  document.getElementById("go").addEventListener("click", async () => {
+    const out = document.getElementById("out");
+    const btn = document.getElementById("go");
+    const text = norm(document.getElementById("claim").value);
+    const url = document.getElementById("url").value.trim();
+    const passage = norm(document.getElementById("passage").value);
+    const bondRaw = document.getElementById("bond").value.trim();
+    const problem = !/^[0-9]+$/.test(bondRaw) || BigInt(bondRaw) < 1n ? "Bond must be a whole number of GEN, at least 1."
+      : !text || text.length > 400 ? "Statement must be 1 to 400 characters."
+      : BLOCKED.test(text) ? "Statement contains characters or phrases reserved for the judge (< > { } ` cc_ and instruction-like phrases)."
+      : passage.length < 20 || passage.length > 600 ? "Quoted passage must be 20 to 600 characters."
+      : !pinned(url) ? "Source URL is not one of the accepted pinned forms." : "";
+    if (problem) { out.innerHTML = notice("bad", problem); return; }
+    btn.disabled = true;
+    try {
+      const before = await claimCount();
+      await write("register_claim", [text, url, passage], BigInt(bondRaw) * GEN, (m) => (out.innerHTML = notice("", m)));
+      const after = await claimCount();
+      if (after > before) {
+        const page = parse(await read("list_claims", [0, Math.min(50, after - before)]));
+        const mine = page.items.find((c) => same(c.citer, account) && c.source_url === url);
+        if (mine) { location.hash = "#/claim/" + mine.id; return; }
+      }
+      out.innerHTML = notice("bad", "The contract rejected this claim (most often a duplicate of an open claim). Your bond was credited to your withdrawable balance on the My balance page.");
+    } catch (e) { out.innerHTML = notice("bad", e.message || String(e)); }
+    btn.disabled = false;
+  });
+}
+
+function actionsFor(c) {
+  const t = now();
+  const acts = [];
+  if (c.status === "OPEN" && t < c.deadline && account && !same(c.citer, account)) acts.push(["challenge_claim", "Challenge with " + gen(c.bond) + " GEN", BigInt(c.bond)]);
+  if (c.status === "OPEN" && t >= c.deadline) acts.push(["finalize_unchallenged", "Finalize (return bond to citer)", 0n]);
+  if (c.status === "CHALLENGED" && t >= c.next_attempt_at) acts.push(["resolve_challenge", "Resolve with AI consensus", 0n]);
+  if (c.status === "CHALLENGED" && t >= c.abandon_after) acts.push(["abandon_unresolved", "Abandon and refund both", 0n]);
+  return acts;
+}
+
+async function renderClaim(id) {
+  setNav("");
+  view.innerHTML = '<p class="mute">Loading…</p>';
+  let c;
+  try { c = parse(await read("get_claim", [id])); } catch (e) { view.innerHTML = notice("bad", "Claim not found."); return; }
+  const rows = [
+    ["Status", statusChip(c.status)],
+    ["Citer", '<span class="mono">' + esc(c.citer) + "</span>"],
+    ["Challenger", c.challenger ? '<span class="mono">' + esc(c.challenger) + "</span>" : "none yet"],
+    ["Bond each", esc(gen(c.bond)) + " GEN"],
+    ["Source", '<a href="' + esc(c.source_url) + '" target="_blank" rel="noopener noreferrer">' + esc(c.source_url) + "</a>"],
+    ["Window", c.status === "OPEN" ? "closes " + esc(ago(c.deadline)) : "closed " + esc(ago(c.deadline))],
+  ];
+  if (c.status === "CHALLENGED" && c.attempts > 0) rows.push(["Next attempt", now() >= c.next_attempt_at ? "available now" : esc(ago(c.next_attempt_at))]);
+  if (c.status === "CHALLENGED") rows.push(["Abandon", now() >= c.abandon_after ? "available now" : esc(ago(c.abandon_after))]);
+  const counter = c.counter_passage ? "<h2>Challenger's counter passage" + (c.counter_status ? " (" + esc(c.counter_status) + ")" : "") + '</h2><div class="quote">' + esc(c.counter_passage) + "</div>" : "";
+  let verdict = "";
+  if (c.verdict) {
+    verdict = "<h2>Verdict: " + esc(c.verdict) + "</h2>" + (c.reason ? "<p>" + esc(c.reason) + "</p>" : "") + (c.evidence_excerpt ? '<div class="quote">' + esc(c.evidence_excerpt) + "</div>" : "") + (c.page_digest ? '<p class="mute">Page digest (leader attested): <span class="mono">' + esc(c.page_digest) + "</span></p>" : "") + (c.attempts ? '<p class="mute">Undetermined attempts: ' + esc(c.attempts) + " of " + esc(config.max_attempts) + "</p>" : "");
+  }
+  view.innerHTML = '<p><a href="#/">← All claims</a></p><h1>' + esc(c.claim_text) + '</h1><div class="quote">' + esc(c.passage) + "</div><dl>" + rows.map((r) => "<dt>" + r[0] + "</dt><dd>" + r[1] + "</dd>").join("") + "</dl>" + counter + verdict + '<div id="extra"></div><div class="actions" id="acts"></div><div id="out"></div>';
+  const box = document.getElementById("acts");
+  const out = document.getElementById("out");
+  const acts = actionsFor(c);
+  if (acts.some((a) => a[0] === "challenge_claim")) {
+    document.getElementById("extra").innerHTML = '<label>Optional counter passage from the same source (exact quote, 20 to 600 characters)</label><textarea id="counter" maxlength="600" placeholder="A sentence on the same page that shows the citation is wrong"></textarea>';
+  }
+  for (const [fn, label, value] of acts) {
+    const b = document.createElement("button");
+    b.textContent = label;
+    b.addEventListener("click", async () => {
+      let args = [id];
+      if (fn === "challenge_claim") {
+        const counterText = norm(document.getElementById("counter").value);
+        if (counterText && (counterText.length < 20 || counterText.length > 600)) { out.innerHTML = notice("bad", "Counter passage must be empty or 20 to 600 characters."); return; }
+        args = [id, counterText];
+      }
+      box.querySelectorAll("button").forEach((x) => (x.disabled = true));
+      try {
+        await write(fn, args, value, (m) => (out.innerHTML = notice("", m)));
+        const after = parse(await read("get_claim", [id]));
+        if (fn === "challenge_claim" && !(after.status === "CHALLENGED" && same(after.challenger, account))) {
+          out.innerHTML = notice("bad", "Challenge was rejected (window closed, already challenged, or bond mismatch). Your GEN was credited to your withdrawable balance.");
+          box.querySelectorAll("button").forEach((x) => (x.disabled = false));
+          return;
+        }
+        renderClaim(id);
+      } catch (e) {
+        out.innerHTML = notice("bad", e.message || String(e));
+        box.querySelectorAll("button").forEach((x) => (x.disabled = false));
+      }
+    });
+    box.appendChild(b);
+  }
+  if (!box.children.length) box.innerHTML = '<span class="mute">' + (account || c.status !== "OPEN" ? "No actions available right now." : "Connect your wallet to challenge.") + "</span>";
+}
+
+async function renderWithdraw() {
+  setNav("withdraw");
+  if (!account) { view.innerHTML = "<h1>My balance</h1>" + notice("", "Connect your wallet to see your balance and reputation."); return; }
+  view.innerHTML = '<p class="mute">Loading…</p>';
+  const [bal, rep, acc] = await Promise.all([read("get_balance", [account]), read("get_reputation", [account]).then(parse), read("get_accounting").then(parse)]);
+  view.innerHTML = "<h1>My balance</h1><div class=\"card\"><div class=\"row\"><div><div class=\"mute\">Withdrawable</div><div style=\"font:700 28px Georgia,serif\">" + esc(gen(bal)) + ' GEN</div></div><button id="wd"' + (BigInt(bal) === 0n ? " disabled" : "") + '>Withdraw</button></div></div><div id="out"></div>' +
+    "<h2>Reputation</h2><dl><dt>Accepted unchallenged</dt><dd>" + esc(rep.accepted_unchallenged) + "</dd><dt>Upheld under challenge</dt><dd>" + esc(rep.upheld_under_challenge) + "</dd><dt>Refuted</dt><dd>" + esc(rep.refuted) + "</dd><dt>Challenges won</dt><dd>" + esc(rep.challenges_won) + "</dd><dt>Challenges lost</dt><dd>" + esc(rep.challenges_lost) + "</dd></dl>" +
+    "<h2>Contract accounting</h2><dl><dt>Held</dt><dd>" + esc(acc.contract_balance ? gen(acc.contract_balance) + " GEN" : "n/a") + "</dd><dt>In escrow</dt><dd>" + esc(gen(acc.escrowed)) + " GEN</dd><dt>Owed to users</dt><dd>" + esc(gen(acc.owed)) + " GEN</dd></dl>";
+  const wd = document.getElementById("wd");
+  wd.addEventListener("click", async () => {
+    const out = document.getElementById("out");
+    wd.disabled = true;
+    try { await write("withdraw", [], 0n, (m) => (out.innerHTML = notice("", m))); renderWithdraw(); } catch (e) { out.innerHTML = notice("bad", e.message || String(e)); wd.disabled = false; }
+  });
+}
+
+async function route() {
+  const hash = location.hash || "#/";
+  if (/^0x0+$/.test(CONTRACT_ADDRESS)) { view.innerHTML = notice("bad", "Set CONTRACT_ADDRESS at the top of this file to your deployed CiteCheck contract."); return; }
+  try { config = Object.assign(config, parse(await read("get_config"))); } catch (e) {}
+  if (hash.startsWith("#/claim/")) return renderClaim(decodeURIComponent(hash.slice(8)));
+  if (hash === "#/new") return renderNew();
+  if (hash === "#/withdraw") return renderWithdraw().catch((e) => (view.innerHTML = notice("bad", e.message || String(e))));
+  return renderHome();
+}
+window.addEventListener("hashchange", route);
+route();
+</script>
+</body>
+</html>
