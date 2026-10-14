@@ -49,6 +49,29 @@ python3 -m unittest discover -s tests -v
 2. Deploy with one constructor argument: `challenge_window_seconds` (60 to 2592000). Use 172800 for production and 120 for a live test.
 3. Put the deployed address in `CONTRACT_ADDRESS` at the top of the script in `frontend/index.html`.
 
+## Live deployment (GenLayer Studio)
+
+| Item | Value |
+|---|---|
+| Contract | `0x3f5127a943d3AD2C4500E8FbB7BA898237bF5FDC` |
+| Explorer | https://explorer-studio.genlayer.com/address/0x3f5127a943d3AD2C4500E8FbB7BA898237bF5FDC |
+| Challenge window | 172800 seconds (48 hours) |
+| Pinned test source | `https://raw.githubusercontent.com/123Cryp/CiteCheck/a1b068fbf0766646689c78873b35bb0614a2ed21/samples/source.md` |
+
+## Verified on live GenVM
+
+| Path | Result |
+|---|---|
+| Supported claim, challenged | `UPHELD`, citer wins both bonds, reason quotes the fetched page |
+| Unsupported claim, challenged | `REFUTED` with verdict `CONTRADICTED` |
+| Fabricated quote, challenged | `REFUTED` with verdict `MISQUOTED`, decided in code without the LLM |
+| Challenger counter passage | Found on the page in code, shown to the judge, claim refuted |
+| Duplicate challenge | Rejected and refunded instead of reverting |
+| Resolve without a challenge, or twice | Reverts |
+| Withdraw | Exact balances paid out, contract balance equals remaining escrow |
+
+The 48 hour unchallenged finalize path is covered by the offline suite and is exercised live once the window of the last open test claim has passed.
+
 ## Status
 
-Offline test suite passes. Live deployment addresses are added here after deployment.
+72 offline tests pass in CI. Live addresses and results are listed above.
