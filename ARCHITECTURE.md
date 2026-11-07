@@ -118,3 +118,11 @@ GEN attached to a payable call that reverts stays in the contract with no record
 | Payable | `@gl.public.write.payable` on both value-carrying methods, and no reverts inside them. |
 | Views | Return JSON strings to avoid map decoding differences in genlayer-js. The list view is paginated. |
 | Evidence | Raw text sources, because JS-rendered pages return navigation chrome only. |
+
+## Frontend notes (v1.1)
+
+| Topic | Note |
+|---|---|
+| Shared logic | `frontend/lib.js` holds pin validation, claim validation, quote matching and stats as pure functions. Node tests cover them, and a corpus check confirmed identical results to the contract's `_pinned_source`, `_norm` and blocked-claim regex. |
+| Quote check | Advisory only. The browser fetches the pinned source and applies the contract's normalization with a case-insensitive match. Cross-origin blocks fall back to a notice, and consensus still decides on chain. |
+| Practice account | A throwaway key kept in browser storage, used only on GenLayer Studio, with a visible remove button. |

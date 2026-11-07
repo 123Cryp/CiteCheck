@@ -38,7 +38,19 @@ label{display:block;margin:14px 0 5px;font-size:14px;color:var(--mute)}
 dl{display:grid;grid-template-columns:130px 1fr;gap:6px 12px;margin:10px 0}
 dt{color:var(--mute);font-size:14px}dd{margin:0;word-break:break-word}
 .actions{display:flex;flex-wrap:wrap;gap:10px;margin:14px 0}
-@media(max-width:560px){.filters{grid-template-columns:1fr}dl{grid-template-columns:1fr}}
+.stats{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin:6px 0 14px}
+.stat{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:10px 12px}
+.stat b{display:block;font:700 22px Georgia,serif}
+.stat span{color:var(--mute);font-size:13px}
+.bar{display:flex;height:8px;border-radius:99px;overflow:hidden;background:var(--line);margin:4px 0 14px}
+.bar i{display:block;height:100%}
+.sm{padding:6px 11px;font-size:13px}
+.inline{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:8px 0}
+.panel{border:1px solid var(--line);border-radius:12px;padding:12px 14px;margin:14px 0;background:#12141a}
+.panel h3{margin:0 0 6px;font:700 15px system-ui}
+.acct{font-size:13px;color:var(--mute);margin:0}
+.toast{position:fixed;left:50%;bottom:22px;transform:translateX(-50%);background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:9px 14px;font-size:14px;z-index:20}
+@media(max-width:560px){.filters{grid-template-columns:1fr}dl{grid-template-columns:1fr}.stats{grid-template-columns:repeat(2,1fr)}}
 </style>
 </head>
 <body>
@@ -54,13 +66,15 @@ dt{color:var(--mute);font-size:14px}dd{margin:0;word-break:break-word}
 <main id="view"></main>
 
 <script type="module">
-import { createClient } from "https://esm.sh/genlayer-js@latest";
+import { createClient, createAccount, generatePrivateKey } from "https://esm.sh/genlayer-js@latest";
 import { studionet } from "https://esm.sh/genlayer-js@latest/chains";
+import { GEN, STATUSES, normText as norm, isPinned as pinned, sourceKind, validateClaim, validateCounter, pinGithubUrl, checkPassage, describeCheck, computeStats, badgeMarkdown, claimLink, friendlyError } from "./lib.js";
 
 const CONTRACT_ADDRESS = "0x3f5127a943d3AD2C4500E8FbB7BA898237bF5FDC";
-const GEN = 10n ** 18n;
+const PRACTICE_KEY = "citecheck.practice.key";
 
 let account = null;
+let practice = false;
 let client = createClient({ chain: studionet });
 let config = { challenge_window: 0, resolve_timeout: 604800, retry_delay: 3600, max_attempts: 3, min_bond: String(GEN) };
 const view = document.getElementById("view");
@@ -94,17 +108,68 @@ async function write(fn, args, value = 0n, onStatus = () => {}) {
   return hash;
 }
 
-async function connect() {
-  if (!window.ethereum) { alert("No injected wallet found. Open this page in a wallet browser."); return; }
+const store = {
+  get(k) { try { return localStorage.getItem(k); } catch { return null; } },
+  set(k, v) { try { localStorage.setItem(k, v); } catch {} },
+  del(k) { try { localStorage.removeItem(k); } catch {} },
+};
+
+function toast(text) {
+  const t = document.createElement("div");
+  t.className = "toast";
+  t.textContent = text;
+  document.body.appendChild(t);
+  setTimeout(() => t.remove(), 2200);
+}
+
+async function copy(text) {
+  try { await navigator.clipboard.writeText(text); toast("Copied"); } catch { window.prompt("Copy this text", text); }
+}
+
+async function connectWallet() {
   const accounts = await window.ethereum.request({ method: "eth_requestAccounts" });
   account = accounts[0];
+  practice = false;
   client = createClient({ chain: studionet, account });
   connectBtn.textContent = short(account);
   route();
 }
-connectBtn.addEventListener("click", () => connect().catch((e) => alert(e.message || e)));
+
+function practiceAccount(create) {
+  let key = store.get(PRACTICE_KEY);
+  if (!key && !create) return null;
+  if (!key) { key = generatePrivateKey(); store.set(PRACTICE_KEY, key); }
+  const acc = createAccount(key);
+  account = acc.address;
+  practice = true;
+  client = createClient({ chain: studionet, account: acc });
+  connectBtn.textContent = "Practice " + short(account);
+  return acc;
+}
+
+async function fundPractice(address) {
+  const rpc = studionet.rpcUrls && studionet.rpcUrls.default && studionet.rpcUrls.default.http && studionet.rpcUrls.default.http[0];
+  if (!rpc) throw new Error("Studio RPC address not available.");
+  const res = await fetch(rpc, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "sim_fundAccount", params: [address, 20 * 10 ** 18] }) });
+  const body = await res.json();
+  if (body.error) throw new Error(body.error.message || "Funding was refused.");
+}
+
+connectBtn.addEventListener("click", async () => {
+  try {
+    if (window.ethereum) { await connectWallet(); return; }
+    const created = !store.get(PRACTICE_KEY);
+    const ok = created ? confirm("No browser wallet found. Create a practice account on GenLayer Studio? The key is stored only in this browser and is for test GEN only.") : true;
+    if (!ok) return;
+    practiceAccount(true);
+    if (created) { try { await fundPractice(account); toast("Practice account funded with test GEN"); } catch (e) { toast("Account created. Fund it from Studio: " + friendlyError(e)); } }
+    route();
+  } catch (e) { alert(friendlyError(e)); }
+});
 if (window.ethereum) {
-  window.ethereum.request({ method: "eth_accounts" }).then((a) => { if (a && a[0]) connect().catch(() => {}); }).catch(() => {});
+  window.ethereum.request({ method: "eth_accounts" }).then((a) => { if (a && a[0]) connectWallet().catch(() => {}); }).catch(() => {});
+} else if (store.get(PRACTICE_KEY)) {
+  try { practiceAccount(false); } catch {}
 }
 
 function setNav(name) {
@@ -124,20 +189,29 @@ function claimCard(c) {
 }
 
 const PAGE_SIZE = 25;
-const PINNED = [
-  /^https:\/\/raw\.githubusercontent\.com\/[A-Za-z0-9][A-Za-z0-9-]{0,38}\/[A-Za-z0-9._-]{1,100}\/[0-9a-f]{40}\/[A-Za-z0-9._~%\/-]{1,200}$/,
-  /^https:\/\/arxiv\.org\/abs\/[0-9]{4}\.[0-9]{4,5}v[0-9]{1,3}$/,
-  /^https:\/\/[a-z]{2,3}(?:-[a-z]{2,8}){0,2}\.wikipedia\.org\/w\/index\.php\?(?:title=[A-Za-z0-9_%().,'!:-]{1,200}&)?oldid=[0-9]{1,12}$/,
-];
-const pinned = (u) => u.length <= 300 && !/\/\.\.?(\/|$)/.test(u) && PINNED.some((r) => r.test(u));
-const BLOCKED = /[<>{}`]|cc_|system prompt|ignore (?:all|previous|prior|the above)/i;
-const norm = (s) => s.replace(/[‘’]/g, "'").replace(/[“”]/g, '"').replace(/[–—]/g, "-").replace(/\s+/g, " ").trim();
+const BAR_COLORS = { OPEN: "var(--link)", CHALLENGED: "var(--warn)", ACCEPTED: "var(--ok)", UPHELD: "var(--ok)", REFUTED: "var(--bad)", VOID: "var(--mute)" };
+
+function statsHtml(items, total) {
+  if (!items.length) return "";
+  const st = computeStats(items);
+  const rate = st.upheldRate === null ? "n/a" : st.upheldRate + "%";
+  const bar = STATUSES.filter((k) => st.counts[k]).map((k) => '<i title="' + k + ": " + st.counts[k] + '" style="width:' + (st.counts[k] * 100 / st.total) + "%;background:" + BAR_COLORS[k] + '"></i>').join("");
+  const note = items.length < total ? " (loaded " + items.length + " of " + total + ")" : "";
+  return '<div class="stats"><div class="stat"><b>' + total + "</b><span>claims" + esc(note) + '</span></div><div class="stat"><b>' + st.escrowedGen + '</b><span>GEN in escrow</span></div><div class="stat"><b>' + (st.counts.OPEN + st.counts.CHALLENGED) + '</b><span>live claims</span></div><div class="stat"><b>' + rate + '</b><span>upheld when decided</span></div></div><div class="bar">' + bar + "</div>";
+}
+const PAGE_FETCH_ERROR = "The browser could not read this source (cross-origin block or network). The validators fetch it themselves on chain.";
+
+async function fetchPage(url) {
+  const res = await fetch(url, { redirect: "follow" });
+  if (!res.ok) throw new Error("HTTP " + res.status);
+  return res.text();
+}
 
 async function claimCount() { return Number(await read("get_claim_count")); }
 
 async function renderHome() {
   setNav("home");
-  view.innerHTML = "<h1>Citation claims</h1><div class=\"filters\"><input id=\"q\" placeholder=\"Search loaded claims, sources, addresses\"><select id=\"st\"><option value=\"\">All statuses</option><option>OPEN</option><option>CHALLENGED</option><option>ACCEPTED</option><option>UPHELD</option><option>REFUTED</option><option>VOID</option></select></div><p class=\"mute\" id=\"meta\"></p><div id=\"list\"><p class=\"mute\">Loading…</p></div><div class=\"actions\"><button class=\"ghost\" id=\"more\" hidden>Load older claims</button></div>";
+  view.innerHTML = "<h1>Citation claims</h1><div id=\"stats\"></div><div class=\"filters\"><input id=\"q\" placeholder=\"Search loaded claims, sources, addresses\"><select id=\"st\"><option value=\"\">All statuses</option><option>OPEN</option><option>CHALLENGED</option><option>ACCEPTED</option><option>UPHELD</option><option>REFUTED</option><option>VOID</option></select></div><p class=\"mute\" id=\"meta\"></p><div id=\"list\"><p class=\"mute\">Loading…</p></div><div class=\"actions\"><button class=\"ghost\" id=\"more\" hidden>Load older claims</button></div>";
   const items = [];
   let total = 0;
   const draw = () => {
@@ -147,6 +221,7 @@ async function renderHome() {
     document.getElementById("list").innerHTML = shown.length ? shown.map(claimCard).join("") : '<p class="mute">No claims match.</p>';
     document.getElementById("meta").textContent = "Showing " + items.length + " of " + total + " claims, newest first.";
     document.getElementById("more").hidden = items.length >= total;
+    document.getElementById("stats").innerHTML = statsHtml(items, total);
   };
   const load = async () => {
     const page = parse(await read("list_claims", [items.length, PAGE_SIZE]));
@@ -164,11 +239,32 @@ function renderNew() {
   setNav("new");
   view.innerHTML = '<h1>Register a citation</h1><p class="mute">Bond GEN to stand behind a citation. If nobody challenges it during the challenge window you get the bond back. If a challenger shows the source does not say what you claim, they win both bonds.</p>' +
     '<label>Statement being cited (1 to 400 characters)</label><textarea id="claim" maxlength="400" placeholder="What does the source say?"></textarea>' +
+    '<div class="panel"><h3>Pin helper</h3><p class="mute">Paste a normal GitHub file link. Add the full commit sha if the link points to a branch.</p><input id="gh" placeholder="https://github.com/owner/repo/blob/main/file.md"><div class="inline"><input id="sha" placeholder="40-character commit sha (only if the link uses a branch)" style="flex:1 1 260px"><button class="ghost sm" id="pin" type="button">Build pinned URL</button></div><div id="pinout"></div></div>' +
     '<label>Pinned source URL</label><input id="url" placeholder="https://raw.githubusercontent.com/owner/repo/&lt;40-char commit sha&gt;/file.md">' +
     '<p class="mute">Accepted: a raw.githubusercontent.com file at a full commit sha, an arxiv.org/abs link with a version (v1, v2…), or a Wikipedia permanent link with oldid. Pinned sources cannot be edited after you register, so neither side can move the evidence.</p>' +
     '<label>Exact quoted passage from the source (20 to 600 characters)</label><textarea id="passage" maxlength="600"></textarea>' +
+    '<div class="inline"><button class="ghost sm" id="chk" type="button">Check quote on the page</button></div><div id="chkout"></div>' +
     '<label>Bond in whole GEN (minimum 1)</label><input id="bond" type="number" min="1" step="1" value="1">' +
     '<div class="actions"><button id="go">Register and bond</button></div><div id="out"></div>';
+  document.getElementById("pin").addEventListener("click", () => {
+    const r = pinGithubUrl(document.getElementById("gh").value, document.getElementById("sha").value);
+    const o = document.getElementById("pinout");
+    if (r.error) { o.innerHTML = notice("bad", r.error); return; }
+    document.getElementById("url").value = r.url;
+    o.innerHTML = notice("ok", "Pinned URL filled in below (commit " + r.usedSha.slice(0, 7) + ").");
+  });
+  document.getElementById("chk").addEventListener("click", async () => {
+    const o = document.getElementById("chkout");
+    const url = document.getElementById("url").value.trim();
+    const passage = document.getElementById("passage").value;
+    if (!pinned(url)) { o.innerHTML = notice("bad", "Enter an accepted pinned source URL first."); return; }
+    if (!norm(passage)) { o.innerHTML = notice("bad", "Enter the quoted passage first."); return; }
+    o.innerHTML = notice("", "Fetching the page…");
+    try {
+      const d = describeCheck(checkPassage(await fetchPage(url), passage));
+      o.innerHTML = notice(d.kind, d.text);
+    } catch (e) { o.innerHTML = notice("", PAGE_FETCH_ERROR); }
+  });
   document.getElementById("go").addEventListener("click", async () => {
     const out = document.getElementById("out");
     const btn = document.getElementById("go");
@@ -176,11 +272,7 @@ function renderNew() {
     const url = document.getElementById("url").value.trim();
     const passage = norm(document.getElementById("passage").value);
     const bondRaw = document.getElementById("bond").value.trim();
-    const problem = !/^[0-9]+$/.test(bondRaw) || BigInt(bondRaw) < 1n ? "Bond must be a whole number of GEN, at least 1."
-      : !text || text.length > 400 ? "Statement must be 1 to 400 characters."
-      : BLOCKED.test(text) ? "Statement contains characters or phrases reserved for the judge (< > { } ` cc_ and instruction-like phrases)."
-      : passage.length < 20 || passage.length > 600 ? "Quoted passage must be 20 to 600 characters."
-      : !pinned(url) ? "Source URL is not one of the accepted pinned forms." : "";
+    const problem = validateClaim({ text, url, passage, bond: bondRaw });
     if (problem) { out.innerHTML = notice("bad", problem); return; }
     btn.disabled = true;
     try {
@@ -193,7 +285,7 @@ function renderNew() {
         if (mine) { location.hash = "#/claim/" + mine.id; return; }
       }
       out.innerHTML = notice("bad", "The contract rejected this claim (most often a duplicate of an open claim). Your bond was credited to your withdrawable balance on the My balance page.");
-    } catch (e) { out.innerHTML = notice("bad", e.message || String(e)); }
+    } catch (e) { out.innerHTML = notice("bad", friendlyError(e)); }
     btn.disabled = false;
   });
 }
@@ -228,12 +320,24 @@ async function renderClaim(id) {
   if (c.verdict) {
     verdict = "<h2>Verdict: " + esc(c.verdict) + "</h2>" + (c.reason ? "<p>" + esc(c.reason) + "</p>" : "") + (c.evidence_excerpt ? '<div class="quote">' + esc(c.evidence_excerpt) + "</div>" : "") + (c.page_digest ? '<p class="mute">Page digest (leader attested): <span class="mono">' + esc(c.page_digest) + "</span></p>" : "") + (c.attempts ? '<p class="mute">Undetermined attempts: ' + esc(c.attempts) + " of " + esc(config.max_attempts) + "</p>" : "");
   }
-  view.innerHTML = '<p><a href="#/">← All claims</a></p><h1>' + esc(c.claim_text) + '</h1><div class="quote">' + esc(c.passage) + "</div><dl>" + rows.map((r) => "<dt>" + r[0] + "</dt><dd>" + r[1] + "</dd>").join("") + "</dl>" + counter + verdict + '<div id="extra"></div><div class="actions" id="acts"></div><div id="out"></div>';
+  const pageBase = location.origin + location.pathname;
+  const share = '<div class="panel"><h3>Share</h3><div class="inline"><button class="ghost sm" id="cplink" type="button">Copy claim link</button><button class="ghost sm" id="cpbadge" type="button">Copy README badge</button></div></div>';
+  view.innerHTML = '<p><a href="#/">← All claims</a></p><h1>' + esc(c.claim_text) + '</h1><div class="quote">' + esc(c.passage) + "</div><dl>" + rows.map((r) => "<dt>" + r[0] + "</dt><dd>" + r[1] + "</dd>").join("") + "</dl>" + counter + verdict + share + '<div id="extra"></div><div class="actions" id="acts"></div><div id="out"></div>';
+  document.getElementById("cplink").addEventListener("click", () => copy(claimLink(pageBase, c.id)));
+  document.getElementById("cpbadge").addEventListener("click", () => copy(badgeMarkdown(pageBase, c.id, c.status)));
   const box = document.getElementById("acts");
   const out = document.getElementById("out");
   const acts = actionsFor(c);
   if (acts.some((a) => a[0] === "challenge_claim")) {
-    document.getElementById("extra").innerHTML = '<label>Optional counter passage from the same source (exact quote, 20 to 600 characters)</label><textarea id="counter" maxlength="600" placeholder="A sentence on the same page that shows the citation is wrong"></textarea>';
+    document.getElementById("extra").innerHTML = '<label>Optional counter passage from the same source (exact quote, 20 to 600 characters)</label><textarea id="counter" maxlength="600" placeholder="A sentence on the same page that shows the citation is wrong"></textarea><div class="inline"><button class="ghost sm" id="chkciter" type="button">Check the citer\'s quote on the page</button><button class="ghost sm" id="chkcounter" type="button">Check my counter passage</button></div><div id="chkout"></div>';
+    const run = async (passage, who) => {
+      const o = document.getElementById("chkout");
+      if (!norm(passage)) { o.innerHTML = notice("bad", "Nothing to check yet."); return; }
+      o.innerHTML = notice("", "Fetching the page…");
+      try { const d = describeCheck(checkPassage(await fetchPage(c.source_url), passage), who); o.innerHTML = notice(d.kind, d.text); } catch (e) { o.innerHTML = notice("", PAGE_FETCH_ERROR); }
+    };
+    document.getElementById("chkciter").addEventListener("click", () => run(c.passage, "The citer's passage"));
+    document.getElementById("chkcounter").addEventListener("click", () => run(document.getElementById("counter").value, "Your counter passage"));
   }
   for (const [fn, label, value] of acts) {
     const b = document.createElement("button");
@@ -242,7 +346,8 @@ async function renderClaim(id) {
       let args = [id];
       if (fn === "challenge_claim") {
         const counterText = norm(document.getElementById("counter").value);
-        if (counterText && (counterText.length < 20 || counterText.length > 600)) { out.innerHTML = notice("bad", "Counter passage must be empty or 20 to 600 characters."); return; }
+        const counterProblem = validateCounter(counterText);
+        if (counterProblem) { out.innerHTML = notice("bad", counterProblem); return; }
         args = [id, counterText];
       }
       box.querySelectorAll("button").forEach((x) => (x.disabled = true));
@@ -256,7 +361,7 @@ async function renderClaim(id) {
         }
         renderClaim(id);
       } catch (e) {
-        out.innerHTML = notice("bad", e.message || String(e));
+        out.innerHTML = notice("bad", friendlyError(e));
         box.querySelectorAll("button").forEach((x) => (x.disabled = false));
       }
     });
@@ -267,17 +372,30 @@ async function renderClaim(id) {
 
 async function renderWithdraw() {
   setNav("withdraw");
-  if (!account) { view.innerHTML = "<h1>My balance</h1>" + notice("", "Connect your wallet to see your balance and reputation."); return; }
+  if (!account) { view.innerHTML = "<h1>My balance</h1>" + notice("", "Connect a wallet, or tap Connect wallet to create a practice account, to see your balance and reputation."); return; }
   view.innerHTML = '<p class="mute">Loading…</p>';
   const [bal, rep, acc] = await Promise.all([read("get_balance", [account]), read("get_reputation", [account]).then(parse), read("get_accounting").then(parse)]);
-  view.innerHTML = "<h1>My balance</h1><div class=\"card\"><div class=\"row\"><div><div class=\"mute\">Withdrawable</div><div style=\"font:700 28px Georgia,serif\">" + esc(gen(bal)) + ' GEN</div></div><button id="wd"' + (BigInt(bal) === 0n ? " disabled" : "") + '>Withdraw</button></div></div><div id="out"></div>' +
+  const acctPanel = practice ? '<div class="panel"><h3>Practice account</h3><p class="acct">Address</p><p class="mono">' + esc(account) + '</p><div class="inline"><button class="ghost sm" id="cpaddr" type="button">Copy address</button><button class="ghost sm" id="fund" type="button">Request test GEN</button><button class="ghost sm" id="rmkey" type="button">Remove from this browser</button></div><p class="mute">The key lives only in this browser and is meant for test GEN on GenLayer Studio.</p><div id="acctout"></div></div>' : "";
+  view.innerHTML = "<h1>My balance</h1>" + acctPanel + "<div class=\"card\"><div class=\"row\"><div><div class=\"mute\">Withdrawable</div><div style=\"font:700 28px Georgia,serif\">" + esc(gen(bal)) + ' GEN</div></div><button id="wd"' + (BigInt(bal) === 0n ? " disabled" : "") + '>Withdraw</button></div></div><div id="out"></div>' +
     "<h2>Reputation</h2><dl><dt>Accepted unchallenged</dt><dd>" + esc(rep.accepted_unchallenged) + "</dd><dt>Upheld under challenge</dt><dd>" + esc(rep.upheld_under_challenge) + "</dd><dt>Refuted</dt><dd>" + esc(rep.refuted) + "</dd><dt>Challenges won</dt><dd>" + esc(rep.challenges_won) + "</dd><dt>Challenges lost</dt><dd>" + esc(rep.challenges_lost) + "</dd></dl>" +
     "<h2>Contract accounting</h2><dl><dt>Held</dt><dd>" + esc(acc.contract_balance ? gen(acc.contract_balance) + " GEN" : "n/a") + "</dd><dt>In escrow</dt><dd>" + esc(gen(acc.escrowed)) + " GEN</dd><dt>Owed to users</dt><dd>" + esc(gen(acc.owed)) + " GEN</dd></dl>";
+  if (practice) {
+    document.getElementById("cpaddr").addEventListener("click", () => copy(account));
+    document.getElementById("fund").addEventListener("click", async () => {
+      const o = document.getElementById("acctout");
+      try { await fundPractice(account); o.innerHTML = notice("ok", "Test GEN requested."); } catch (e) { o.innerHTML = notice("bad", friendlyError(e)); }
+    });
+    document.getElementById("rmkey").addEventListener("click", () => {
+      if (!confirm("Remove the practice key from this browser? Unspent test GEN on it becomes unreachable.")) return;
+      store.del(PRACTICE_KEY);
+      location.reload();
+    });
+  }
   const wd = document.getElementById("wd");
   wd.addEventListener("click", async () => {
     const out = document.getElementById("out");
     wd.disabled = true;
-    try { await write("withdraw", [], 0n, (m) => (out.innerHTML = notice("", m))); renderWithdraw(); } catch (e) { out.innerHTML = notice("bad", e.message || String(e)); wd.disabled = false; }
+    try { await write("withdraw", [], 0n, (m) => (out.innerHTML = notice("", m))); renderWithdraw(); } catch (e) { out.innerHTML = notice("bad", friendlyError(e)); wd.disabled = false; }
   });
 }
 

@@ -33,14 +33,32 @@ Branch links, unversioned arXiv links and normal Wikipedia article links are rej
 |---|---|
 | `contracts/citecheck.py` | The Intelligent Contract, ready to paste into GenLayer Studio. |
 | `frontend/index.html` | No-build hash-routed frontend (genlayer-js from a CDN). |
-| `tests/` | Offline test suite with a self-written GenLayer SDK stub. No pip install needed. |
+| `frontend/lib.js` | Pure helpers shared by the page and its tests: pin validation, quote check, stats, badges. |
+| `tests/` | Offline contract suite with a self-written GenLayer SDK stub, plus Node tests for `frontend/lib.js`. |
+| `CHANGELOG.md` | Release notes. |
 | `ARCHITECTURE.md` | State machine, economics, threat model, GenVM lessons. |
 | `samples/source.md` | Fixed sample source for live testing through its commit-pinned raw URL. |
+
+## Frontend
+
+Live site: https://123cryp.github.io/CiteCheck/
+
+| Feature | What it does |
+|---|---|
+| Pin helper | Turns a normal GitHub file link plus a commit sha into the pinned raw URL the contract accepts. |
+| Quote check | Fetches the source in the browser and runs the same normalization and case-insensitive match as the contract, so a citer sees a MISQUOTED outcome before bonding GEN. |
+| Challenger check | On a claim page, checks the citer's quote and the challenger's counter passage against the page before bonding. |
+| Overview | Claim count, GEN in escrow, live claims, upheld rate among decided claims, status bar. |
+| Share | Copy a claim link or a README status badge for any claim. |
+| Practice account | Without a browser wallet, one tap creates a throwaway account for GenLayer Studio, stored only in the browser, and requests test GEN. |
+
+The in-browser quote check is advisory. Sources that block cross-origin reads (arXiv, Wikipedia) show a notice, and the validators always fetch the page themselves on chain.
 
 ## Run the tests
 
 ```
 python3 -m unittest discover -s tests -v
+node --test tests/frontend_lib.test.mjs
 ```
 
 ## Deploy
@@ -74,4 +92,4 @@ The 48 hour unchallenged finalize path is covered by the offline suite and is ex
 
 ## Status
 
-72 offline tests pass in CI. Live addresses and results are listed above.
+72 offline contract tests and 11 frontend helper tests pass in CI. Live addresses and results are listed above. See `CHANGELOG.md` for releases.
