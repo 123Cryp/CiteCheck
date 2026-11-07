@@ -1,0 +1,22 @@
+name: unzip upload
+on:
+  push:
+    paths:
+      - upload.zip
+permissions:
+  contents: write
+jobs:
+  unzip:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Extract
+        run: |
+          if [ ! -f upload.zip ]; then echo "no upload.zip"; exit 0; fi
+          unzip -o upload.zip
+          rm upload.zip
+          git config user.name "github-actions"
+          git config user.email "github-actions@users.noreply.github.com"
+          git add -A
+          git commit -m "Unpack upload.zip" || exit 0
+          git push
